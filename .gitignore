@@ -1,0 +1,44 @@
+# Node
+node_modules/
+dist/
+vite.svg
+*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# dotenv
+.env
+.env.*.local
+
+# Vite/Cache
+.vite/
+.cache/
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+*.sln.docstates
+*.rsuser
+*.ide
+
+# Certs dev
+**/Properties/ServiceDependencies/**/profiles/*.pubxml
+**/Properties/launchSettings.json
+
+# Docker
+**/.docker/

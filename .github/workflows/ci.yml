@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+
+      - name: Dotnet info
+        run: dotnet --info
+
+      - name: Restore
+        run: dotnet restore ./API-net.sln
+
+      - name: Build (Release)
+        run: dotnet build ./API-net.sln --configuration Release --no-restore
+
+      - name: Test (unit/integration)
+        run: |
+          dotnet test ./tests/CleanTodos.Tests.csproj \
+            --configuration Release \
+            --no-restore \
+            --logger "trx;LogFileName=test_results.trx" \
+            --verbosity normal
+
+      # Mostra onde os resultados foram parar (diagnóstico)
+      - name: List TestResults
+        if: always()
+        run: |
+          echo "Searching for TestResults..."
+          ls -R | grep -i TestResults || true
+          echo "Done."
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/TestResults/**/*.trx
+            **/TestResults/**/*.xml
+            **/TestResults/**/*.json
+          if-no-files-found: ignore

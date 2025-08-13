@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light dark; }
+html, body, #root { height: 100%; }
+body { @apply bg-gray-50 text-gray-900; }
+
+/* inputs number sem spinners (Chromium/Firefox) */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; }
+
+:root {
+    /* Light palette — confortável, sem branco puro na tela */
+    --bg-0: #f6f7fb;      /* fundo distante */
+    --bg-1: #eef1f7;      /* halo do gradiente */
+    --bg-2: #ffffff;      /* toque de luz */
+    --surface: rgba(255,255,255,0.92);
+    --border: #e2e8f0;    /* slate-200 */
+    --text:   #0f172a;    /* slate-900 */
+    --muted:  #64748b;    /* slate-500 */
+  
+    /* Ação */
+    --primary: #4f46e5;   /* indigo-600 */
+    --primary-hover: #4338ca;
+  
+    /* Chips/skeletons */
+    --chip-bg: #f1f5f9;   /* slate-100 */
+  
+    /* Selection/focus */
+    --ring: rgba(15,23,42,0.18);   /* custom ring (sem azul padrão) */
+    --selection-bg: #dbeafe;       /* indigo-100 suave */
+  }
+  
+  :root.dark {
+    /* mantém seu dark atual, só espelhando via tokens */
+    --bg-0: #0a1020;
+    --bg-1: #0c1424;
+    --bg-2: #0a1120;
+    --surface: rgba(2,6,23,.75);   /* slate-950/75 */
+    --border: #1f2937;             /* slate-800 */
+    --text:   #e5e7eb;
+    --muted:  #94a3b8;
+  
+    --primary: #6366f1;            /* indigo-500/600 */
+    --primary-hover: #5459e8;
+  
+    --chip-bg: rgba(148,163,184,0.15);
+    --ring: rgba(148,163,184,0.25);
+    --selection-bg: rgba(99,102,241,0.25);
+  }
+  
+  /* ring e selection custom — tira “azul Windows/Chrome” */
+  *:focus {
+    outline: none;
+    box-shadow: 0 0 0 0.25rem var(--ring);
+  }
+  ::selection { background: var(--selection-bg); color: inherit; }
+
+  /* esconde o ícone/btn nativo do timepicker (WebKit/Chromium) */
+.time-input::-webkit-calendar-picker-indicator { display: none; }
+.time-input::-webkit-clear-button { display: none; }
+
+/* remove aparências nativas e spinners */
+.time-input { -webkit-appearance: none; appearance: none; }
+
+/* Firefox (o time não mostra ícone, mas garantimos consistência) */
+input[type="time"] { appearance: none; }
