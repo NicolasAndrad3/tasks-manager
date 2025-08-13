@@ -12,6 +12,10 @@ type Meta = {
   dueAt?: string | null;
   notify?: { method: "email"; target: string };
   notifyPlan?: NotifyPlan[];
+
+  timerStartedAt?: string | null;  
+  timerAlerted?: boolean;          
+  dueAlerted?: boolean;            
 };
 
 const TITLE = "Tasks Schedule";
@@ -70,22 +74,94 @@ function buildNotifyPlan(title: string, dueAtISO: string): NotifyPlan[] {
   const dateStr = fmtEnDate(base);
   const timeStr = fmtEnTime(base);
   return [
-    {
-      offsetHours: 3,
-      subject: `Reminder: "${title}" in 3 hours`,
-      body: `Event "${title}" starts at ${timeStr} on ${dateStr}. That's in 3 hours.`,
-    },
-    {
-      offsetHours: 1,
-      subject: `Reminder: "${title}" in 1 hour`,
-      body: `Event "${title}" starts at ${timeStr} on ${dateStr}. That's in 1 hour.`,
-    },
-    {
-      offsetHours: 0,
-      subject: `It's time: "${title}"`,
-      body: `Event "${title}" is today at ${timeStr}.`,
-    },
+    { offsetHours: 3, subject: `Reminder: "${title}" in 3 hours`, body: `Event "${title}" starts at ${timeStr} on ${dateStr}. That's in 3 hours.` },
+    { offsetHours: 1, subject: `Reminder: "${title}" in 1 hour`, body: `Event "${title}" starts at ${timeStr} on ${dateStr}. That's in 1 hour.` },
+    { offsetHours: 0, subject: `It's time: "${title}"`, body: `Event "${title}" is today at ${timeStr}.` },
   ];
+}
+
+function isPm(time: string) {
+  if (!time) return false;
+  const [h] = time.split(":").map(Number);
+  return h >= 12;
+}
+function toggleAmPm(current: string): string {
+  if (!current) return "12:00";
+  let [h, m] = current.split(":").map(Number);
+  if (h >= 12) h -= 12; else h += 12;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function playBeep(durationMs = 900, freq = 880) {
+  try {
+    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.type = "sine";
+    o.frequency.value = freq;
+    o.start();
+    g.gain.setValueAtTime(0.2, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + durationMs / 1000);
+    setTimeout(() => {
+      o.stop();
+      ctx.close();
+    }, durationMs + 100);
+  } catch {}
+}
+
+async function ensureNotifPermission() {
+  if ("Notification" in window && Notification.permission === "default") {
+    try { await Notification.requestPermission(); } catch {}
+  }
+}
+
+function notifyBrowser(title: string, body: string) {
+  if ("Notification" in window && Notification.permission === "granted") {
+    try { new Notification(title, { body }); } catch {}
+  } else {
+    // fallback simples
+    try { alert(`${title}\n\n${body}`); } catch {}
+  }
+  if (navigator.vibrate) navigator.vibrate([220, 80, 220]);
+}
+
+function fireAlarm(kind: "due" | "duration", title: string, when: Date) {
+  const prettyTime = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const prettyDate = when.toLocaleDateString();
+  const head = kind === "due" ? "Time's up!" : "Timer finished!";
+  const body = `${title} — ${prettyDate} ${prettyTime}`;
+  playBeep();
+  notifyBrowser(head, body);
+}
+
+function Segmented<T extends string>(props: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  const { value, onChange, options, className = "", style } = props;
+  return (
+    <div className={`seg w-full h-14 rounded-2xl px-2 ${className}`} style={style}>
+      <div className="flex w-full h-full items-center gap-2">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            className={`seg-btn flex-1 h-10 rounded-xl text-sm grid place-items-center ${value === o.value ? "is-active" : ""}`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -131,21 +207,22 @@ export default function App() {
   }, [calOpen]);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("task-meta");
-      if (raw) setMeta(JSON.parse(raw));
-    } catch {}
+    try { const raw = localStorage.getItem("task-meta"); if (raw) setMeta(JSON.parse(raw)); } catch {}
   }, []);
-  useEffect(() => {
-    localStorage.setItem("task-meta", JSON.stringify(meta));
-  }, [meta]);
+  useEffect(() => { localStorage.setItem("task-meta", JSON.stringify(meta)); }, [meta]);
 
+  // Backend fetch
   useEffect(() => {
     (async () => {
-      setLoading(true);
-      const items = await listTodos();
-      setTodos(items);
-      setLoading(false);
+      try {
+        setLoading(true);
+        const items = await listTodos();
+        setTodos(items);
+      } catch (err) {
+        console.error("Failed to load todos from API", err);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
@@ -161,56 +238,92 @@ export default function App() {
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     const cleanTitle = title.trim();
+    const dueAtStr = mode === "due" ? joinDateTime(dueDate, dueTime) : null;
+const minutesVal = mode === "duration" ? totalMinutes() : null;
+const notifyPlan = mode === "due" && notify === "email" && dueAtStr
+  ? (buildNotifyPlan(title.trim(), dueAtStr).map(x => x.offsetHours * 60)) 
+  : [];
     if (!cleanTitle) return;
 
-    const created = await createTodo({ title: cleanTitle, isDone: false });
+    try {
+      const cleanTitle = title.trim();
 
-    const dueAtStr = mode === "due" ? joinDateTime(dueDate, dueTime) : "";
-    const plan = dueAtStr ? buildNotifyPlan(cleanTitle, dueAtStr) : [];
+      const dueAtStr: string | null =
+        mode === "due" ? joinDateTime(dueDate, dueTime) : null;
+    
+      const minutesVal: number | null =
+        mode === "duration" ? totalMinutes() : null;
 
-    const notifyObj =
-      mode === "due" && notify === "email" && contact.trim()
-        ? { method: "email" as const, target: contact.trim() }
-        : undefined;
+      const notifyPlanMinutes: number[] =
+        mode === "due" && notify === "email" && dueAtStr
+          ? buildNotifyPlan(cleanTitle, dueAtStr).map(p => p.offsetHours * 60)
+          : [];
+    
+      const created = await createTodo({
+        title: cleanTitle,
+        isDone: false,
+        dueAt: dueAtStr,
+        minutes: minutesVal,
+        notifyPlanMinutes,
+        notifyEmail: notify === "email" ? (contact.trim() || null) : null,
+      });
 
-    const m: Meta =
-      mode === "duration"
-        ? { minutes: totalMinutes(), dueAt: null }
-        : mode === "due"
-        ? {
-            minutes: undefined,
-            dueAt: dueAtStr || null,
-            notify: notifyObj,
-            notifyPlan: notifyObj ? plan : [],
-          }
-        : {};
+      const notifyObj =
+        mode === "due" && notify === "email" && contact.trim()
+          ? { method: "email" as const, target: contact.trim() }
+          : undefined;
+    
+      const m: Meta =
+        mode === "duration"
+          ? {
+              minutes: minutesVal ?? 0,
+              dueAt: null,
 
-    setTodos((prev) => [created, ...prev]);
-    setMeta((prev) => ({ ...prev, [created.id]: m }));
+              timerStartedAt: new Date().toISOString(),
 
-    setTitle("");
-    setHours("");
-    setMins("");
-    setDueDate("");
-    setDueTime("");
-    setNotify("none");
-    setContact("");
-    setCalOpen(false);
-    inputRef.current?.focus();
-  }
+              timerAlerted: false,
+            }
+          : mode === "due"
+          ? {
+              minutes: undefined,
+              dueAt: dueAtStr,
+
+              dueAlerted: false,
+              notify: notifyObj,
+              notifyPlan:
+                notifyObj && dueAtStr
+                  ? buildNotifyPlan(cleanTitle, dueAtStr)
+                  : [],
+            }
+          : {};
+    
+      setTodos(prev => [created, ...prev]);
+      setMeta(prev => ({ ...prev, [created.id]: m }));
+    
+      setTitle("");
+      setHours("");
+      setMins("");
+      setDueDate("");
+      setDueTime("");
+      setNotify("none");
+      setContact("");
+      setCalOpen(false);
+      inputRef.current?.focus();
+    } catch (err) {
+      console.error("Failed to create todo", err);
+    }
+  }    
 
   async function handleToggle(todo: Todo) {
     const next = { ...todo, isDone: !todo.isDone };
     setTodos((prev) => prev.map((p) => (p.id === todo.id ? next : p)));
-    await updateTodo(todo.id, { title: next.title, isDone: next.isDone });
+    try { await updateTodo(todo.id, { title: next.title, isDone: next.isDone }); } catch (err) { console.error(err); }
   }
 
   async function handleDelete(todo: Todo) {
     setTodos((prev) => prev.filter((p) => p.id !== todo.id));
-    const m = { ...meta };
-    delete m[todo.id];
-    setMeta(m);
-    await deleteTodo(todo.id);
+    const m = { ...meta }; delete m[todo.id]; setMeta(m);
+    try { await deleteTodo(todo.id); } catch (err) { console.error(err); }
   }
 
   const chipBg = { background: "var(--chip-bg)" } as const;
@@ -222,176 +335,153 @@ export default function App() {
     color: "var(--text)",
   } as const;
 
+  useEffect(() => {
+    let disposed = false;
+    const timers: number[] = [];
+
+    (async () => { await ensureNotifPermission(); })();
+
+    const now = Date.now();
+
+    for (const t of todos) {
+      if (t.isDone) continue;
+      const m = meta[t.id];
+      if (!m) continue;
+
+      if (m.dueAt && !m.dueAlerted) {
+        const due = parseDue(m.dueAt)?.getTime();
+        if (due) {
+          const ms = due - now;
+          if (ms <= 0) {
+
+            if (!disposed) {
+              fireAlarm("due", t.title, new Date(due));
+              setMeta((prev) => ({ ...prev, [t.id]: { ...prev[t.id], dueAlerted: true } }));
+            }
+          } else if (ms < 2_147_000_000) {
+            const id = window.setTimeout(() => {
+              if (disposed) return;
+              fireAlarm("due", t.title, new Date());
+              setMeta((prev) => ({ ...prev, [t.id]: { ...prev[t.id], dueAlerted: true } }));
+            }, ms);
+            timers.push(id);
+          }
+        }
+      }
+
+      if (typeof m.minutes === "number" && m.minutes > 0 && !m.timerAlerted) {
+
+        let start = m.timerStartedAt ? Date.parse(m.timerStartedAt) : NaN;
+        if (!Number.isFinite(start)) {
+          start = Date.now();
+          setMeta((prev) => ({ ...prev, [t.id]: { ...prev[t.id], timerStartedAt: new Date(start).toISOString() } }));
+        }
+        const end = start + m.minutes * 60_000;
+        const ms = end - now;
+        if (ms <= 0) {
+          if (!disposed) {
+            fireAlarm("duration", t.title, new Date(end));
+            setMeta((prev) => ({ ...prev, [t.id]: { ...prev[t.id], timerAlerted: true } }));
+          }
+        } else if (ms < 2_147_000_000) {
+          const id = window.setTimeout(() => {
+            if (disposed) return;
+            fireAlarm("duration", t.title, new Date());
+            setMeta((prev) => ({ ...prev, [t.id]: { ...prev[t.id], timerAlerted: true } }));
+          }, ms);
+          timers.push(id);
+        }
+      }
+    }
+
+    return () => {
+      disposed = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [todos, meta]);
+
   return (
-    <div
-      className="min-h-dvh"
-      style={{
-        backgroundImage:
-          "radial-gradient(78% 120% at 80% 0%, var(--bg-1) 0%, var(--bg-0) 42%, var(--bg-2) 100%)",
-        ...text,
-      }}
-    >
-      <div className="mx-auto max-w-6xl px-6 py-16 flex items-center justify-center">
-        <div
-          className="w-full max-w-5xl rounded-[28px] p-10 backdrop-blur transition-shadow overflow-hidden"
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            boxShadow: "0 60px 120px -60px rgba(2,6,23,.25), 0 8px 30px -10px rgba(2,6,23,.10)",
-            ...text,
-          }}
-        >
+    <div className="min-h-dvh" style={{ backgroundImage: "radial-gradient(78% 120% at 80% 0%, var(--bg-1) 0%, var(--bg-0) 42%, var(--bg-2) 100%)", ...text }}>
+      <div className="mx-auto max-w-7xl px-6 py-16 flex items-center justify-center">
+        <div className="w-full max-w-6xl rounded-[28px] p-10 backdrop-blur transition-shadow" style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "0 60px 120px -60px rgba(2,6,23,.25), 0 8px 30px -10px rgba(2,6,23,.10)", overflow: "visible", ...text }}>
           <div className="flex items-center justify-between mb-8">
             <div>
-              <h1 className="text-4xl font-semibold tracking-tight" style={text}>
-                {TITLE}
-              </h1>
+              <h1 className="text-4xl font-semibold tracking-tight" style={text}>{TITLE}</h1>
               <p className="text-sm mt-1" style={muted}>.NET 8 API · React + Vite</p>
             </div>
-            <button
-              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-              className="h-11 w-11 rounded-2xl transition-shadow"
-              style={{
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                boxShadow: "0 6px 18px -8px rgba(2,6,23,.18)",
-              }}
-              title={theme === "dark" ? "Switch to light" : "Switch to dark"}
-              aria-label="Toggle theme"
-            >
-              <span className="grid place-items-center text-lg">{theme === "dark" ? "☀️" : "🌙"}</span>
+            <button onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} className="h-11 w-11 rounded-2xl transition-shadow" style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "0 6px 18px -8px rgba(2,6,23,.18)" }} title={theme === "dark" ? "Switch to light" : "Switch to dark"} aria-label="Toggle theme">
+              <span className="grid place-items-center text-lg">{theme === "dark" ? "Dark" : "Light"}</span>
             </button>
           </div>
 
-          <form onSubmit={handleAdd} className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-[1fr,140px] items-start">
-            <div className="min-w-0 grid grid-cols-1 lg:grid-cols-[1fr,260px,1fr] gap-4">
-              <input
-                ref={inputRef}
-                placeholder="Task title…"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="h-14 rounded-2xl px-5 text-[15px] shadow-sm focus:outline-none"
-                style={{ ...fieldStyle, boxShadow: "0 2px 10px -6px rgba(2,6,23,.08)" }}
+          <form onSubmit={handleAdd} className="mb-6 space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr,260px] gap-4">
+              <input ref={inputRef} placeholder="Task title…" value={title} onChange={(e) => setTitle(e.target.value)} className="h-14 rounded-2xl px-5 text-[15px] shadow-sm focus:outline-none" style={{ ...fieldStyle, boxShadow: "0 2px 10px -6px rgba(2,6,23,.08)" }} />
+
+              <Segmented<Mode>
+                value={mode}
+                onChange={setMode}
+                options={[{ value: "due", label: "Due" },{ value: "duration", label: "Duration" },{ value: "none", label: "None" }]}
+                className="seg-field"
+                style={fieldStyle}
               />
+            </div>
 
-              <div className="h-14 rounded-2xl px-2 flex items-center gap-2"
-                   style={{ ...fieldStyle, boxShadow: "0 2px 10px -6px rgba(2,6,23,.08)" }}>
-                {(["due", "duration", "none"] as Mode[]).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setMode(m)}
-                    className="px-3 h-10 rounded-xl text-sm font-medium"
-                    style={
-                      mode === m
-                        ? { background: "var(--primary)", color: "#fff", boxShadow: "0 8px 18px -8px var(--primary)" }
-                        : { color: "var(--muted)" }
-                    }
-                  >
-                    {m === "due" ? "Due" : m === "duration" ? "Duration" : "None"}
-                  </button>
-                ))}
-              </div>
-
-              {mode === "duration" ? (
-                <div className="grid grid-cols-[1fr,1fr] gap-3">
-                  <div className="relative">
-                    <input
-                      aria-label="Hours"
-                      type="number" min={0} step={1} placeholder="HH"
-                      value={hours}
-                      onChange={(e) => setHours(e.target.value === "" ? "" : Math.max(0, Number(e.target.value)))}
-                      className="h-14 w-full rounded-2xl px-5 pr-10 text-[15px] shadow-sm focus:outline-none"
-                      style={fieldStyle}
-                    />
-                    <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs" style={muted}>h</span>
-                  </div>
-                  <div className="relative">
-                    <input
-                      aria-label="Minutes"
-                      type="number" min={0} max={59} step={1} placeholder="MM"
-                      value={mins}
-                      onChange={(e) => {
-                        const v = e.target.value === "" ? "" : Number(e.target.value);
-                        setMins(v === "" ? "" : Math.max(0, Math.min(59, v)));
-                      }}
-                      className="h-14 w-full rounded-2xl px-5 pr-10 text-[15px] shadow-sm focus:outline-none"
-                      style={fieldStyle}
-                    />
-                    <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs" style={muted}>min</span>
-                  </div>
-                </div>
-              ) : mode === "due" ? (
+            {mode === "duration" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="relative">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setCalOpen((v) => !v)}
-                      className="h-14 flex-1 rounded-2xl px-4 text-left text-[15px] shadow-sm focus:outline-none"
-                      style={{ ...fieldStyle, boxShadow: "0 2px 10px -6px rgba(2,6,23,.08)" }}
-                    >
+                  <input aria-label="Hours" type="number" min={0} step={1} placeholder="HH" value={hours} onChange={(e) => setHours(e.target.value === "" ? "" : Math.max(0, Number(e.target.value)))} className="h-14 w-full rounded-2xl px-5 pr-10 text-[15px] shadow-sm focus:outline-none" style={fieldStyle} />
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs" style={muted}>h</span>
+                </div>
+                <div className="relative">
+                  <input aria-label="Minutes" type="number" min={0} max={59} step={1} placeholder="MM" value={mins} onChange={(e) => { const v = e.target.value === "" ? "" : Number(e.target.value); setMins(v === "" ? "" : Math.max(0, Math.min(59, v))); }} className="h-14 w-full rounded-2xl px-5 pr-10 text-[15px] shadow-sm focus:outline-none" style={fieldStyle} />
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs" style={muted}>min</span>
+                </div>
+              </div>
+            ) : mode === "due" ? (
+              <div className="space-y-3">
+                <div className="relative">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => setCalOpen((v) => !v)} className="h-14 flex-1 min-w-[220px] rounded-2xl px-4 text-left text-[15px] shadow-sm focus:outline-none" style={{ ...fieldStyle, boxShadow: "0 2px 10px -6px rgba(2,6,23,.08)" }}>
                       {dueDate ? formatDueHuman(joinDateTime(dueDate, dueTime)) : "Select a date"}
                     </button>
-                    <input
-                     type="time"
-                     value={dueTime}
-                     onChange={(e) => setDueTime(e.target.value)}
-                     className="time-input h-14 w-[140px] rounded-2xl px-3 text-[15px] focus:outline-none focus:ring-0"
-                     style={fieldStyle}
-                   />
+
+                    <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} className="time-input h-14 w-[140px] rounded-2xl px-3 text-[15px] focus:outline-none focus:ring-0" style={fieldStyle} />
+
+                    <button type="button" onClick={() => setDueTime((v) => toggleAmPm(v))} className="h-14 rounded-2xl px-4 text-sm font-medium" style={{ ...fieldStyle, boxShadow: "0 2px 10px -6px rgba(2,6,23,.08)" }} title="Toggle AM/PM">
+                      {isPm(dueTime) ? "PM" : "AM"}
+                    </button>
                   </div>
 
                   {calOpen && (
-                    <div ref={calRef} className="relative">
+                    <div ref={calRef} className="absolute z-50 mt-2">
                       <Calendar value={dueDate || undefined} onChange={(v) => setDueDate(v)} onClose={() => setCalOpen(false)} />
                     </div>
                   )}
-
-                  <div className="mt-3 grid grid-cols-1 lg:grid-cols-[auto,1fr] gap-2 min-w-0">
-                    <div className="inline-flex rounded-2xl p-1"
-                         style={{ ...chipBg, border: "1px solid var(--border)" }}>
-                      {(["none", "email"] as Notify[]).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          onClick={() => setNotify(n)}
-                          className="px-3 h-10 rounded-xl text-sm font-medium"
-                          style={
-                            notify === n
-                              ? { background: "var(--surface)", color: "var(--text)", boxShadow: "0 8px 18px -10px rgba(2,6,23,.18)", border: "1px solid var(--border)" }
-                              : { color: "var(--muted)" }
-                          }
-                        >
-                          {n === "none" ? "No notify" : "Email"}
-                        </button>
-                      ))}
-                    </div>
-                    {notify === "email" && (
-                      <input
-                        placeholder="email@domain.com"
-                        value={contact}
-                        onChange={(e) => setContact(e.target.value)}
-                        className="h-12 w-full min-w-0 rounded-2xl px-4 text-[14px] shadow-sm focus:outline-none"
-                        style={fieldStyle}
-                      />
-                    )}
-                  </div>
                 </div>
-              ) : (
-                <div className="h-14 rounded-2xl grid place-items-center text-sm"
-                     style={{ border: "1px dashed var(--border)", color: "var(--muted)" }}>
-                  No schedule
-                </div>
-              )}
-            </div>
 
-            <div className="flex items-start justify-end">
-              <button
-                type="submit"
-                disabled={!title.trim() || (mode === "duration" && totalMinutes() === 0)}
-                className="w-[140px] h-14 rounded-2xl font-medium disabled:opacity-50"
-                style={{ background: "var(--primary)", color: "#fff", boxShadow: "0 20px 30px -18px var(--primary)" }}
-              >
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 min-w-0">
+                  <Segmented<Notify>
+                    value={notify}
+                    onChange={setNotify}
+                    options={[{ value: "none", label: "No notify" }, { value: "email", label: "Email" }]}
+                    className="seg-field"
+                    style={fieldStyle}
+                  />
+
+                  {notify === "email" && (
+                    <input placeholder="email@domain.com" value={contact} onChange={(e) => setContact(e.target.value)} className="h-14 w-full rounded-2xl px-4 text-[14px] shadow-sm focus:outline-none" style={fieldStyle} />
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="h-14 rounded-2xl grid place-items-center text-sm" style={{ border: "1px dashed var(--border)", color: "var(--muted)" }}>
+                No schedule
+              </div>
+            )}
+
+            <div className="flex items-start justify-end pt-2">
+              <button type="submit" disabled={!title.trim() || (mode === "duration" && totalMinutes() === 0)} className="w-[140px] h-14 rounded-2xl font-medium disabled:opacity-50" style={{ background: "var(--primary)", color: "#fff", boxShadow: "0 20px 30px -18px var(--primary)" }}>
                 Add
               </button>
             </div>
@@ -400,16 +490,7 @@ export default function App() {
           <div className="flex items-center justify-between mb-5">
             <div className="inline-flex rounded-full p-1" style={{ ...chipBg, border: "1px solid var(--border)" }}>
               {(["all", "active", "done"] as Filter[]).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className="px-4 py-1.5 rounded-full text-sm font-medium"
-                  style={
-                    filter === f
-                      ? { background: "var(--surface)", color: "var(--text)", boxShadow: "0 10px 20px -12px rgba(2,6,23,.18)", border: "1px solid var(--border)" }
-                      : { color: "var(--muted)" }
-                  }
-                >
+                <button key={f} onClick={() => setFilter(f)} className="px-4 py-1.5 rounded-full text-sm font-medium" style={filter === f ? { background: "var(--surface)", color: "var(--text)", boxShadow: "0 10px 20px -12px rgba(2,6,23,.18)", border: "1px solid var(--border)" } : { color: "var(--muted)" }}>
                   {f === "all" ? "All" : f === "active" ? "Active" : "Done"}
                 </button>
               ))}
@@ -418,11 +499,7 @@ export default function App() {
           </div>
 
           {loading ? (
-            <ul className="space-y-4">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <li key={i} className="h-20 rounded-2xl animate-pulse" style={chipBg} />
-              ))}
-            </ul>
+            <ul className="space-y-4">{Array.from({ length: 3 }).map((_, i) => (<li key={i} className="h-20 rounded-2xl animate-pulse" style={chipBg} />))}</ul>
           ) : filtered.length === 0 ? (
             <div className="text-sm" style={muted}>No tasks yet.</div>
           ) : (
@@ -433,74 +510,23 @@ export default function App() {
                 const now = new Date();
                 const overdue = !!(dueDateObj && !t.isDone && dueDateObj.getTime() < now.getTime());
                 return (
-                  <li
-                    key={t.id}
-                    className="group rounded-2xl p-4 flex items-center gap-4"
-                    style={{
-                      background: "color-mix(in oklab, var(--surface) 85%, white)",
-                      border: "1px solid var(--border)",
-                      boxShadow: "0 10px 24px -16px rgba(2,6,23,.18)",
-                    }}
-                  >
-                    <input
-                      id={`t-${t.id}`}
-                      type="checkbox"
-                      checked={t.isDone}
-                      onChange={() => handleToggle(t)}
-                      className="size-5 accent-indigo-600"
-                    />
-                    <label
-                      htmlFor={`t-${t.id}`}
-                      className={`flex-1 ${t.isDone ? "line-through" : ""}`}
-                      style={{ color: t.isDone ? "var(--muted)" : "var(--text)" }}
-                    >
+                  <li key={t.id} className="group rounded-2xl p-4 flex items-center gap-4" style={{ background: "color-mix(in oklab, var(--surface) 85%, white)", border: "1px solid var(--border)", boxShadow: "0 10px 24px -16px rgba(2,6,23,.18)" }}>
+                    <input id={`t-${t.id}`} type="checkbox" checked={t.isDone} onChange={() => handleToggle(t)} className="size-5 accent-indigo-600" />
+                    <label htmlFor={`t-${t.id}`} className={`flex-1 ${t.isDone ? "line-through" : ""}`} style={{ color: t.isDone ? "var(--muted)" : "var(--text)" }}>
                       <div className="font-medium text-[15px]">{t.title}</div>
                       <div className="mt-1 flex flex-wrap gap-2 text-xs">
                         {typeof m.minutes === "number" && (
-                          <span
-                            className="px-2 py-0.5 rounded-full"
-                            style={{
-                              background: "color-mix(in oklab, #0ea5e9 16%, var(--chip-bg))",
-                              color: "color-mix(in oklab, #0ea5e9 70%, var(--text))",
-                            }}
-                          >
-                            ⏱ {m.minutes} min
-                          </span>
+                          <span className="px-2 py-0.5 rounded-full" style={{ background: "color-mix(in oklab, #0ea5e9 16%, var(--chip-bg))", color: "color-mix(in oklab, #0ea5e9 70%, var(--text))" }}> {m.minutes} min</span>
                         )}
                         {m.dueAt && (
-                          <span
-                            className="px-2 py-0.5 rounded-full"
-                            style={
-                              overdue
-                                ? { background: "color-mix(in oklab, #f43f5e 16%, var(--chip-bg))", color: "color-mix(in oklab, #f43f5e 70%, var(--text))" }
-                                : { background: "var(--chip-bg)", color: "color-mix(in oklab, var(--text) 70%, var(--chip-bg))" }
-                            }
-                          >
-                            Due: {formatDueHuman(m.dueAt)}
-                          </span>
+                          <span className="px-2 py-0.5 rounded-full" style={overdue ? { background: "color-mix(in oklab, #f43f5e 16%, var(--chip-bg))", color: "color-mix(in oklab, #f43f5e 70%, var(--text))" } : { background: "var(--chip-bg)", color: "color-mix(in oklab, var(--text) 70%, var(--chip-bg))" }}>Due: {formatDueHuman(m.dueAt)}</span>
                         )}
                         {m.notify && (
-                          <span
-                            className="px-2 py-0.5 rounded-full"
-                            style={{ background: "color-mix(in oklab, #8b5cf6 16%, var(--chip-bg))", color: "color-mix(in oklab, #8b5cf6 75%, var(--text))" }}
-                          >
-                            Notify: EMAIL
-                          </span>
+                          <span className="px-2 py-0.5 rounded-full" style={{ background: "color-mix(in oklab, #8b5cf6 16%, var(--chip-bg))", color: "color-mix(in oklab, #8b5cf6 75%, var(--text))" }}>Notify: EMAIL</span>
                         )}
                       </div>
                     </label>
-
-                    <button
-                      onClick={() => handleDelete(t)}
-                      className="opacity-100 px-3 py-2 rounded-xl"
-                      style={{
-                        background: "color-mix(in oklab, #f43f5e 8%, var(--surface))",
-                        color: "color-mix(in oklab, #f43f5e 70%, var(--text))",
-                        boxShadow: "0 10px 20px -12px rgba(244,63,94,.25)",
-                      }}
-                    >
-                      Delete
-                    </button>
+                    <button onClick={() => handleDelete(t)} className="opacity-100 px-3 py-2 rounded-xl" style={{ background: "color-mix(in oklab, #f43f5e 8%, var(--surface))", color: "color-mix(in oklab, #f43f5e 70%, var(--text))", boxShadow: "0 10px 20px -12px rgba(244,63,94,.25)" }}>Delete</button>
                   </li>
                 );
               })}

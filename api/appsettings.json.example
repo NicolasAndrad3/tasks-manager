@@ -1,0 +1,13 @@
+{
+  "ConnectionStrings": {
+    "Default": "Data Source=app.db"
+  },
+  "Email": {
+    "Host": "<SMTP_HOST>",
+    "Port": 587,
+    "User": "<SMTP_USER>",
+    "Pass": "<SMTP_PASS>",
+    "From": "<FROM_EMAIL>",
+    "EnableSsl": true
+  }
+}

@@ -1,11 +1,9 @@
 * text=auto
 
-# Windows-friendly p/ .NET
 *.sln      text eol=crlf
 *.cs       text eol=crlf
 *.csproj   text eol=crlf
 
-# Unix-friendly p/ scripts/CI/web
 *.sh       text eol=lf
 *.yml      text eol=lf
 *.yaml     text eol=lf

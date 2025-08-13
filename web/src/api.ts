@@ -1,35 +1,87 @@
-import axios from "axios";
+// src/api.ts
+export type Todo = {
+  id: number;
+  title: string;
+  isDone: boolean;
+  dueAt?: string | null;
+  minutes?: number | null;
+  notifyPlanMinutes: number[];
+  notifyEmail?: string | null;
+};
 
-const API_BASE = import.meta.env?.VITE_API_BASE_URL || "/api";
-export const api = axios.create({ baseURL: API_BASE });
+// Base URL: usa env em prod; em dev cai no origin (para o proxy do Vite)
+const API =
+  import.meta.env.VITE_API?.replace(/\/+$/, "") ||
+  `${window.location.protocol}//${window.location.hostname}:${window.location.port}`;
 
-export type Todo = { id: number; title: string; isDone: boolean; };
-export type TodoDto = { title: string; isDone: boolean; };
-
-function normalizeArray(data: any): Todo[] {
-  if (Array.isArray(data)) return data;
-  if (data?.items && Array.isArray(data.items)) return data.items;
-  if (data?.value && Array.isArray(data.value)) return data.value;
-  if (data?.$values && Array.isArray(data.$values)) return data.$values;
-  if (typeof data === "string") { try { const p = JSON.parse(data); if (Array.isArray(p)) return p; } catch{} }
-  console.warn("Unexpected todos payload:", data);
-  return [];
+async function ok<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status} ${res.statusText}${text ? ` – ${text}` : ""}`);
+  }
+  return res.json() as Promise<T>;
 }
 
 export async function listTodos(): Promise<Todo[]> {
-  const { data } = await api.get("/todos");
-  return normalizeArray(data);
+  const res = await fetch(`${API}/api/todos/`, { method: "GET", credentials: "include" });
+  return ok<Todo[]>(res);
 }
 
-export async function createTodo(dto: TodoDto): Promise<Todo> {
-  const { data } = await api.post("/todos", dto);
-  return data as Todo;
+export async function createTodo(p: {
+  title: string;
+  isDone: boolean;
+  dueAt?: string | null;
+  minutes?: number | null;
+  notifyPlanMinutes?: number[];
+  notifyEmail?: string | null;
+}): Promise<Todo> {
+  const body = {
+    title: p.title,
+    isDone: p.isDone,
+    dueAt: p.dueAt ?? null,
+    minutes: p.minutes ?? null,
+    notifyPlanMinutes: p.notifyPlanMinutes ?? [],
+    notifyEmail: p.notifyEmail ?? null,
+  };
+  const res = await fetch(`${API}/api/todos/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    credentials: "include",
+  });
+  return ok<Todo>(res);
 }
 
-export async function updateTodo(id: number, dto: TodoDto): Promise<void> {
-  await api.put(`/todos/${id}`, dto);
+export async function updateTodo(
+  id: number,
+  p: {
+    title: string;
+    isDone: boolean;
+    dueAt?: string | null;
+    minutes?: number | null;
+    notifyPlanMinutes?: number[];
+    notifyEmail?: string | null;
+  }
+): Promise<void> {
+  const res = await fetch(`${API}/api/todos/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: p.title,
+      isDone: p.isDone,
+      dueAt: p.dueAt ?? null,
+      minutes: p.minutes ?? null,
+      notifyPlanMinutes: p.notifyPlanMinutes ?? [],
+      notifyEmail: p.notifyEmail ?? null,
+    }),
+    credentials: "include",
+  });
+  await ok(res);
 }
 
 export async function deleteTodo(id: number): Promise<void> {
-  await api.delete(`/todos/${id}`);
+  const res = await fetch(`${API}/api/todos/${id}`, { method: "DELETE", credentials: "include" });
+  await ok(res);
 }
+
+console.info("[API] base =", API);

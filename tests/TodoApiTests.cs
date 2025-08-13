@@ -14,11 +14,9 @@ public class TodoApiTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task Create_And_List_Todos()
     {
-        // Cria um Todo
         var create = await _client.PostAsJsonAsync("/api/todos", new { title = "test from CI", isDone = false });
         create.EnsureSuccessStatusCode();
 
-        // Lista e verifica se veio
         var list = await _client.GetAsync("/api/todos");
         list.EnsureSuccessStatusCode();
 

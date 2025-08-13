@@ -6,64 +6,128 @@
 html, body, #root { height: 100%; }
 body { @apply bg-gray-50 text-gray-900; }
 
-/* inputs number sem spinners (Chromium/Firefox) */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 input[type="number"] { -moz-appearance: textfield; }
 
 :root {
-    /* Light palette — confortável, sem branco puro na tela */
-    --bg-0: #f6f7fb;      /* fundo distante */
-    --bg-1: #eef1f7;      /* halo do gradiente */
-    --bg-2: #ffffff;      /* toque de luz */
-    --surface: rgba(255,255,255,0.92);
-    --border: #e2e8f0;    /* slate-200 */
-    --text:   #0f172a;    /* slate-900 */
-    --muted:  #64748b;    /* slate-500 */
-  
-    /* Ação */
-    --primary: #4f46e5;   /* indigo-600 */
-    --primary-hover: #4338ca;
-  
-    /* Chips/skeletons */
-    --chip-bg: #f1f5f9;   /* slate-100 */
-  
-    /* Selection/focus */
-    --ring: rgba(15,23,42,0.18);   /* custom ring (sem azul padrão) */
-    --selection-bg: #dbeafe;       /* indigo-100 suave */
-  }
-  
-  :root.dark {
-    /* mantém seu dark atual, só espelhando via tokens */
-    --bg-0: #0a1020;
-    --bg-1: #0c1424;
-    --bg-2: #0a1120;
-    --surface: rgba(2,6,23,.75);   /* slate-950/75 */
-    --border: #1f2937;             /* slate-800 */
-    --text:   #e5e7eb;
-    --muted:  #94a3b8;
-  
-    --primary: #6366f1;            /* indigo-500/600 */
-    --primary-hover: #5459e8;
-  
-    --chip-bg: rgba(148,163,184,0.15);
-    --ring: rgba(148,163,184,0.25);
-    --selection-bg: rgba(99,102,241,0.25);
-  }
-  
-  /* ring e selection custom — tira “azul Windows/Chrome” */
-  *:focus {
-    outline: none;
-    box-shadow: 0 0 0 0.25rem var(--ring);
-  }
-  ::selection { background: var(--selection-bg); color: inherit; }
+  --bg-0: #f6f7fb;
+  --bg-1: #eef1f7;
+  --bg-2: #ffffff;
+  --surface: rgba(255,255,255,0.92);
+  --border: #e2e8f0;
+  --text:   #0f172a;
+  --muted:  #64748b;
 
-  /* esconde o ícone/btn nativo do timepicker (WebKit/Chromium) */
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+
+  --chip-bg: #f1f5f9;
+
+  --ring: rgba(15,23,42,0.18);
+  --selection-bg: #dbeafe;
+}
+
+:root.dark {
+  --bg-0: #0a1020;
+  --bg-1: #0c1424;
+  --bg-2: #0a1120;
+  --surface: rgba(2,6,23,.75);
+  --border: #1f2937;
+  --text:   #e5e7eb;
+  --muted:  #94a3b8;
+
+  --primary: #6366f1;
+  --primary-hover: #5459e8;
+
+  --chip-bg: rgba(148,163,184,0.15);
+  --ring: rgba(148,163,184,0.25);
+  --selection-bg: rgba(99,102,241,0.25);
+}
+
+*:focus {
+  outline: none;
+  box-shadow: 0 0 0 0.25rem var(--ring);
+}
+::selection { background: var(--selection-bg); color: inherit; }
+
+
+:root { --time-seg-bg: color-mix(in oklab, var(--primary) 16%, transparent); }
+:root.dark { --time-seg-bg: color-mix(in oklab, var(--primary) 22%, transparent); }
+
 .time-input::-webkit-calendar-picker-indicator { display: none; }
 .time-input::-webkit-clear-button { display: none; }
 
-/* remove aparências nativas e spinners */
-.time-input { -webkit-appearance: none; appearance: none; }
+.time-input { -webkit-appearance: none; appearance: none; caret-color: var(--primary); }
 
-/* Firefox (o time não mostra ícone, mas garantimos consistência) */
 input[type="time"] { appearance: none; }
+
+.time-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 0.25rem var(--ring) !important;
+}
+
+.time-input::-webkit-datetime-edit-ampm-field:focus,
+.time-input::-webkit-datetime-edit-hour-field:focus,
+.time-input::-webkit-datetime-edit-minute-field:focus,
+.time-input::-webkit-datetime-edit-second-field:focus,
+.time-input::-webkit-datetime-edit-text:focus,
+.time-input::-webkit-datetime-edit-fields-wrapper:focus {
+  background-color: var(--time-seg-bg);
+  color: var(--text);
+  border-radius: 6px;
+}
+
+.time-input::selection { background: transparent; }
+
+.seg,
+.seg-field {
+  display: flex;
+  align-items: center;
+  gap: .5rem;           
+  padding: .5rem;      
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: 1rem;  
+  height: 3.5rem;       
+}
+
+/* botão base */
+.seg-btn {
+  flex: 1 1 0%;
+  height: 2.5rem;               
+  display: grid;
+  place-items: center;
+  padding: 0 .75rem;
+  border-radius: .75rem;        
+  border: 1px solid transparent; 
+  background: transparent;
+  color: var(--muted);
+  font-size: .875rem;            
+  font-weight: 500;
+  white-space: nowrap;           
+  line-height: 1;
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+
+.seg-btn:hover {
+  background: color-mix(in oklab, var(--chip-bg) 55%, transparent);
+  color: var(--text);
+}
+
+.seg-btn:focus {
+  box-shadow: 0 0 0 0.25rem var(--ring);
+}
+
+.seg-btn.is-active {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+  box-shadow: 0 10px 18px -12px rgba(2,6,23,.18);
+}
+
+.seg-btn.is-active:focus {
+  box-shadow:
+    0 10px 18px -12px rgba(2,6,23,.18),
+    0 0 0 0.25rem var(--ring);
+}
