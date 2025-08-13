@@ -13,9 +13,10 @@ type Meta = {
   notify?: { method: "email"; target: string };
   notifyPlan?: NotifyPlan[];
 
-  timerStartedAt?: string | null;  
-  timerAlerted?: boolean;          
-  dueAlerted?: boolean;            
+  // alarms locais
+  timerStartedAt?: string | null;
+  timerAlerted?: boolean;
+  dueAlerted?: boolean;
 };
 
 const TITLE = "Tasks Schedule";
@@ -45,6 +46,7 @@ const THEME_VARS: Record<"light" | "dark", Record<string, string>> = {
   },
 };
 
+// ---------------- Utils ----------------
 function joinDateTime(dateStr: string, timeStr: string) {
   if (!dateStr) return "";
   return timeStr ? `${dateStr}T${timeStr}` : dateStr;
@@ -80,6 +82,7 @@ function buildNotifyPlan(title: string, dueAtISO: string): NotifyPlan[] {
   ];
 }
 
+// AM/PM helpers
 function isPm(time: string) {
   if (!time) return false;
   const [h] = time.split(":").map(Number);
@@ -92,6 +95,7 @@ function toggleAmPm(current: string): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+// ---- Local alarm helpers (beep + Notification) ----
 function playBeep(durationMs = 900, freq = 880) {
   try {
     const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
@@ -112,23 +116,19 @@ function playBeep(durationMs = 900, freq = 880) {
     }, durationMs + 100);
   } catch {}
 }
-
 async function ensureNotifPermission() {
   if ("Notification" in window && Notification.permission === "default") {
     try { await Notification.requestPermission(); } catch {}
   }
 }
-
 function notifyBrowser(title: string, body: string) {
   if ("Notification" in window && Notification.permission === "granted") {
     try { new Notification(title, { body }); } catch {}
   } else {
-    // fallback simples
     try { alert(`${title}\n\n${body}`); } catch {}
   }
   if (navigator.vibrate) navigator.vibrate([220, 80, 220]);
 }
-
 function fireAlarm(kind: "due" | "duration", title: string, when: Date) {
   const prettyTime = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const prettyDate = when.toLocaleDateString();
@@ -138,6 +138,7 @@ function fireAlarm(kind: "due" | "duration", title: string, when: Date) {
   notifyBrowser(head, body);
 }
 
+// ---------------- Segmented ----------------
 function Segmented<T extends string>(props: {
   value: T;
   onChange: (v: T) => void;
@@ -164,6 +165,7 @@ function Segmented<T extends string>(props: {
   );
 }
 
+// ---------------- Component ----------------
 export default function App() {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const saved = localStorage.getItem("ts-theme");
@@ -235,59 +237,56 @@ export default function App() {
   const totalMinutes = () =>
     (typeof hours === "number" ? hours * 60 : 0) + (typeof mins === "number" ? mins : 0);
 
+  // ---------- handleAdd corrigido ----------
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
+
     const cleanTitle = title.trim();
-    const dueAtStr = mode === "due" ? joinDateTime(dueDate, dueTime) : null;
-const minutesVal = mode === "duration" ? totalMinutes() : null;
-const notifyPlan = mode === "due" && notify === "email" && dueAtStr
-  ? (buildNotifyPlan(title.trim(), dueAtStr).map(x => x.offsetHours * 60)) 
-  : [];
     if (!cleanTitle) return;
 
+    const dueAtStr: string | null =
+      mode === "due" ? joinDateTime(dueDate, dueTime) : null;
+
+    const minutesVal: number | null =
+      mode === "duration" ? totalMinutes() : null;
+
+    const notifyPlanMinutes: number[] =
+      mode === "due" && notify === "email" && dueAtStr
+        ? buildNotifyPlan(cleanTitle, dueAtStr).map(p => p.offsetHours * 60)
+        : [];
+
+    // monta payload sem brigar com tipos do api.ts
+    const payload: any = {
+      title: cleanTitle,
+      isDone: false,
+      dueAt: dueAtStr,
+      minutes: minutesVal,
+      notifyPlanMinutes,
+    };
+    if (notify === "email") {
+      payload.notifyEmail = (contact.trim() || null);
+    }
+
     try {
-      const cleanTitle = title.trim();
-
-      const dueAtStr: string | null =
-        mode === "due" ? joinDateTime(dueDate, dueTime) : null;
-    
-      const minutesVal: number | null =
-        mode === "duration" ? totalMinutes() : null;
-
-      const notifyPlanMinutes: number[] =
-        mode === "due" && notify === "email" && dueAtStr
-          ? buildNotifyPlan(cleanTitle, dueAtStr).map(p => p.offsetHours * 60)
-          : [];
-    
-      const created = await createTodo({
-        title: cleanTitle,
-        isDone: false,
-        dueAt: dueAtStr,
-        minutes: minutesVal,
-        notifyPlanMinutes,
-        notifyEmail: notify === "email" ? (contact.trim() || null) : null,
-      });
+      const created = await createTodo(payload);
 
       const notifyObj =
         mode === "due" && notify === "email" && contact.trim()
           ? { method: "email" as const, target: contact.trim() }
           : undefined;
-    
+
       const m: Meta =
         mode === "duration"
           ? {
               minutes: minutesVal ?? 0,
               dueAt: null,
-
               timerStartedAt: new Date().toISOString(),
-
               timerAlerted: false,
             }
           : mode === "due"
           ? {
               minutes: undefined,
               dueAt: dueAtStr,
-
               dueAlerted: false,
               notify: notifyObj,
               notifyPlan:
@@ -296,10 +295,11 @@ const notifyPlan = mode === "due" && notify === "email" && dueAtStr
                   : [],
             }
           : {};
-    
+
       setTodos(prev => [created, ...prev]);
       setMeta(prev => ({ ...prev, [created.id]: m }));
-    
+
+      // reset
       setTitle("");
       setHours("");
       setMins("");
@@ -312,7 +312,7 @@ const notifyPlan = mode === "due" && notify === "email" && dueAtStr
     } catch (err) {
       console.error("Failed to create todo", err);
     }
-  }    
+  }
 
   async function handleToggle(todo: Todo) {
     const next = { ...todo, isDone: !todo.isDone };
@@ -335,6 +335,7 @@ const notifyPlan = mode === "due" && notify === "email" && dueAtStr
     color: "var(--text)",
   } as const;
 
+  // ---------- Alarm scheduling ----------
   useEffect(() => {
     let disposed = false;
     const timers: number[] = [];
@@ -348,12 +349,12 @@ const notifyPlan = mode === "due" && notify === "email" && dueAtStr
       const m = meta[t.id];
       if (!m) continue;
 
+      // Due alarms
       if (m.dueAt && !m.dueAlerted) {
         const due = parseDue(m.dueAt)?.getTime();
         if (due) {
           const ms = due - now;
           if (ms <= 0) {
-
             if (!disposed) {
               fireAlarm("due", t.title, new Date(due));
               setMeta((prev) => ({ ...prev, [t.id]: { ...prev[t.id], dueAlerted: true } }));
@@ -369,8 +370,8 @@ const notifyPlan = mode === "due" && notify === "email" && dueAtStr
         }
       }
 
+      // Duration alarms
       if (typeof m.minutes === "number" && m.minutes > 0 && !m.timerAlerted) {
-
         let start = m.timerStartedAt ? Date.parse(m.timerStartedAt) : NaN;
         if (!Number.isFinite(start)) {
           start = Date.now();
@@ -414,7 +415,9 @@ const notifyPlan = mode === "due" && notify === "email" && dueAtStr
             </button>
           </div>
 
+          {/* FORM */}
           <form onSubmit={handleAdd} className="mb-6 space-y-4">
+            {/* Linha 1 */}
             <div className="grid grid-cols-1 lg:grid-cols-[1fr,260px] gap-4">
               <input ref={inputRef} placeholder="Task title…" value={title} onChange={(e) => setTitle(e.target.value)} className="h-14 rounded-2xl px-5 text-[15px] shadow-sm focus:outline-none" style={{ ...fieldStyle, boxShadow: "0 2px 10px -6px rgba(2,6,23,.08)" }} />
 
@@ -427,6 +430,7 @@ const notifyPlan = mode === "due" && notify === "email" && dueAtStr
               />
             </div>
 
+            {/* Linha 2 */}
             {mode === "duration" ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="relative">
@@ -460,6 +464,7 @@ const notifyPlan = mode === "due" && notify === "email" && dueAtStr
                   )}
                 </div>
 
+                {/* Notify: 50/50 com o input */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 min-w-0">
                   <Segmented<Notify>
                     value={notify}
@@ -480,6 +485,7 @@ const notifyPlan = mode === "due" && notify === "email" && dueAtStr
               </div>
             )}
 
+            {/* Add */}
             <div className="flex items-start justify-end pt-2">
               <button type="submit" disabled={!title.trim() || (mode === "duration" && totalMinutes() === 0)} className="w-[140px] h-14 rounded-2xl font-medium disabled:opacity-50" style={{ background: "var(--primary)", color: "#fff", boxShadow: "0 20px 30px -18px var(--primary)" }}>
                 Add
