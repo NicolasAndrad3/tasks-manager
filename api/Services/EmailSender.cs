@@ -5,47 +5,30 @@ using Microsoft.Extensions.Options;
 
 namespace CleanTodos.Services;
 
-public class EmailSender : IEmailSender
+/// SMTP real (não usado por padrão; Program.cs registra NullEmailSender).
+public sealed class SmtpEmailSender : global::IEmailSender
 {
-    private readonly EmailSettings _cfg;
-    private readonly ILogger<EmailSender> _log;
-
-    public EmailSender(IOptions<EmailSettings> options, ILogger<EmailSender> log)
-    {
-        _cfg = options.Value;
-        _log = log;
-    }
+    private readonly global::EmailSettings _cfg;
+    public SmtpEmailSender(IOptions<global::EmailSettings> cfg) => _cfg = cfg.Value ?? new();
 
     public async Task SendAsync(string to, string subject, string body, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(_cfg.Host))
-            throw new InvalidOperationException("EmailSettings.Host is not configured.");
-        if (string.IsNullOrWhiteSpace(_cfg.From))
-            throw new InvalidOperationException("EmailSettings.From is not configured.");
-
-        using var client = new SmtpClient(_cfg.Host, _cfg.Port)
+        if (string.IsNullOrWhiteSpace(_cfg.Host) ||
+            string.IsNullOrWhiteSpace(_cfg.From))
         {
-            EnableSsl = _cfg.EnableSsl ?? true,
-            DeliveryMethod = SmtpDeliveryMethod.Network
-        };
-
-        if (!string.IsNullOrWhiteSpace(_cfg.User))
-        {
-            client.Credentials = new NetworkCredential(_cfg.User, _cfg.Pass);
+            // Sem configuração -> não envia (mantém seguro pra abrir o repo)
+            return;
         }
 
-        using var msg = new MailMessage
+        using var msg = new MailMessage(_cfg.From!, to, subject, body) { IsBodyHtml = false };
+        using var smtp = new SmtpClient(_cfg.Host!, _cfg.Port > 0 ? _cfg.Port : 587)
         {
-            From = new MailAddress(_cfg.From),
-            Subject = subject,
-            Body = body,
-            IsBodyHtml = false
+            EnableSsl = _cfg.EnableSsl ?? true
         };
-        msg.To.Add(new MailAddress(to));
-
-        _log.LogInformation("Sending email to {To} via {Host}:{Port} (SSL={Ssl})",
-            to, _cfg.Host, _cfg.Port, _cfg.EnableSsl ?? true);
-
-        await client.SendMailAsync(msg, ct);
+        if (!string.IsNullOrWhiteSpace(_cfg.User))
+        {
+            smtp.Credentials = new NetworkCredential(_cfg.User, _cfg.Pass ?? string.Empty);
+        }
+        await smtp.SendMailAsync(msg, ct);
     }
 }

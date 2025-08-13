@@ -6,14 +6,15 @@ export type Todo = {
   dueAt?: string | null;
   minutes?: number | null;
   notifyPlanMinutes: number[];
-  notifyEmail?: string | null;
+  // notifyEmail?: string | null; // se você adicionar no modelo
 };
 
-// Base URL: usa env em prod; em dev cai no origin (para o proxy do Vite)
+// Base URL: usa env (VITE_API). Se não houver, cai pro origin atual.
 const API =
-  import.meta.env.VITE_API?.replace(/\/+$/, "") ||
-  `${window.location.protocol}//${window.location.hostname}:${window.location.port}`;
+  (import.meta.env.VITE_API as string | undefined)?.replace(/\/+$/, "") ||
+  `${window.location.protocol}//${window.location.hostname}${window.location.port ? `:${window.location.port}` : ""}`;
 
+// Helper para tratar erros HTTP
 async function ok<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -22,6 +23,7 @@ async function ok<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Endpoints
 export async function listTodos(): Promise<Todo[]> {
   const res = await fetch(`${API}/api/todos/`, { method: "GET", credentials: "include" });
   return ok<Todo[]>(res);
@@ -33,7 +35,7 @@ export async function createTodo(p: {
   dueAt?: string | null;
   minutes?: number | null;
   notifyPlanMinutes?: number[];
-  notifyEmail?: string | null;
+  // notifyEmail?: string | null;
 }): Promise<Todo> {
   const body = {
     title: p.title,
@@ -41,7 +43,7 @@ export async function createTodo(p: {
     dueAt: p.dueAt ?? null,
     minutes: p.minutes ?? null,
     notifyPlanMinutes: p.notifyPlanMinutes ?? [],
-    notifyEmail: p.notifyEmail ?? null,
+    // notifyEmail: p.notifyEmail ?? null,
   };
   const res = await fetch(`${API}/api/todos/`, {
     method: "POST",
@@ -52,17 +54,14 @@ export async function createTodo(p: {
   return ok<Todo>(res);
 }
 
-export async function updateTodo(
-  id: number,
-  p: {
-    title: string;
-    isDone: boolean;
-    dueAt?: string | null;
-    minutes?: number | null;
-    notifyPlanMinutes?: number[];
-    notifyEmail?: string | null;
-  }
-): Promise<void> {
+export async function updateTodo(id: number, p: {
+  title: string;
+  isDone: boolean;
+  dueAt?: string | null;
+  minutes?: number | null;
+  notifyPlanMinutes?: number[];
+  // notifyEmail?: string | null;
+}): Promise<void> {
   const res = await fetch(`${API}/api/todos/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -72,7 +71,7 @@ export async function updateTodo(
       dueAt: p.dueAt ?? null,
       minutes: p.minutes ?? null,
       notifyPlanMinutes: p.notifyPlanMinutes ?? [],
-      notifyEmail: p.notifyEmail ?? null,
+      // notifyEmail: p.notifyEmail ?? null,
     }),
     credentials: "include",
   });
