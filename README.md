@@ -1,4 +1,7 @@
+![Tasks Manager – banner](https://github.com/user-attachments/assets/bd585141-4815-4a50-9370-c3a7a5238913)
+
 Task Schedule Manager
+
 Minimal .NET 8 API + React (Vite) + Tailwind UI to manage tasks with due dates, duration timers, local alarms, and (optional) email reminders.
 
 Stack
